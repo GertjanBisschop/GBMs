@@ -1,0 +1,135 @@
+//final script
+
+initialize() {
+	defineConstant("optimum1", 2.0);
+	defineConstant("optimum2", -2.0);
+	defineConstant("generations", 100000);
+	defineConstant('seq_len', 1e5);
+	defineConstant("migration", 0.0001);
+	//selection coefficient s in SLiM defines that mutation's fitness effect (1+s) when homozygous
+	//if het fitness = (1+0.5s)
+	defineConstant('mean_gbm', 0.001);
+
+	/*
+	//commented out: input parameters
+	defineConstant("selection_sigma", 0.05);
+	defineConstant("mutation_rate", 0);
+	defineConstant('iter', 0);
+	defineConstant('recomb', 1e-6);
+	defineConstant('fraction_gbm', 0.0);
+	defineConstant('fraction_lbm', 1.0);
+	*/
+
+	total = fraction_lbm + fraction_gbm;
+	initializeMutationRate(mutation_rate*total);
+	initializeRecombinationRate(recomb);
+
+	scriptLBM = 'if (rbinom(1,1,0.5)) rexp(1,mu=mean_lbm); else -rexp(1,mu=mean_lbm);';
+
+	// m1 mutation = QTL under divergent selection (LBM)
+	initializeMutationType("m1", 0.5, "s", scriptLBM);
+	
+	//make sure slim includes fixed mutations to calculate fitness
+	m1.convertToSubstitution = F;
+	//multiple mutations on one locus, stack effect sizes s, only remember last
+	m1.mutationStackPolicy = "l";
+	
+	// m2 mutation: GBM
+	initializeMutationType("m2", 0.5, "e", mean_gbm);
+	m2.mutationStackPolicy = "l";	
+
+	// g1 genomic element type: both 
+	initializeGenomicElementType("g1", c(m1, m2), c(fraction_lbm, fraction_gbm));
+	for (element in seqLen(asInteger(seq_len)))
+		initializeGenomicElement(g1, element, element);
+
+	initializeTreeSeq(simplificationRatio=INF);
+
+	//setwd	
+	setwd(""+folder);
+}
+
+1 {
+	writeFile("DB_glob"+iter+".txt", "time, mean_div, loc1, loc2", append=F);
+	//size in each deme 10000
+	sim.addSubpop("p1", 10000);
+	sim.addSubpop("p2", 10000);
+	p1.setMigrationRates(p2, migration);
+	p2.setMigrationRates(p1, migration);
+	gens = seq(1,generations+1, by=500);
+	for (gen in gens)
+		sim.registerLateEvent(NULL, s1.source, gen, gen);
+	sim.deregisterScriptBlock(s1);
+	}
+
+s1 1 late() {
+	
+	loc1 = mean(p1.individuals.tagF);
+	loc2 = mean(p2.individuals.tagF);	
+	div = loc1 - loc2;
+
+	//windowwise contributions aka clustering
+	num_windows = 100;
+	p1av = float(num_windows);
+	p2av = float(num_windows);
+	pav = float(num_windows);
+	p1muts = p1.individuals.genomes.mutationsOfType(m1);
+	p2muts = p2.individuals.genomes.mutationsOfType(m1);
+
+	for (i in (0:(num_windows-1))){
+		window = c(i*seq_len/num_windows, i*seq_len/num_windows + seq_len/num_windows-1);
+		p1pos = p1muts[window[0]<=p1muts.position & p1muts.position<=window[1]];
+		p1coeff = p1pos.selectionCoeff;
+		p1av[i] = sum(p1pos.selectionCoeff)/p1.individualCount;
+		p2pos = p2muts[window[0]<=p2muts.position & p2muts.position<=window[1]];
+		p2coeff = p2pos.selectionCoeff;
+		p2av[i] = sum(p2pos.selectionCoeff)/p2.individualCount;
+		pav[i] = (p1av[i] - p2av[i])/div;
+	}
+
+	//global values
+	writeFile("DB_glob"+iter+".txt", paste(c(sim.generation, div, loc1, loc2), sep=", "), append=T);
+	//windowwise contributions
+	//writeFile("windows"+iter+"_1.txt", sim.generation+", "+paste(p1av, sep=", "), append=T);
+	//writeFile("windows"+iter+"_2.txt", sim.generation+", "+paste(p2av, sep=", "), append=T);
+	writeFile("windows_div"+iter+".txt", sim.generation+", "+paste(pav, sep=", "), append=T);
+}
+	
+//make QTLs intrinsically neutral
+fitness(m1){return 1.0;}
+
+1: late(){
+	for (subpop in c(p1,p2))
+
+		{
+		inds = subpop.individuals;
+		phenotypes = inds.sumOfMutationsOfType(m1);
+		optimum = (subpop == p1 ? optimum1 else optimum2);
+		inds.fitnessScaling = exp(-selection_sigma*(phenotypes - optimum)^2);
+		inds.tagF = phenotypes;	
+		}
+	}
+
+
+	//info on those mutations that fixed 
+
+100001 late() {
+		
+		sim.treeSeqOutput('treeseq'+iter+'.trees');
+		
+		//info on the GBMs that fixed
+		sim.outputFixedMutations('fixed_'+iter+'.txt');
+
+		//info on the LBMs and their fequency
+		muts = sim.mutationsOfType(m1);
+		mutsfreqs = sim.mutationFrequencies(NULL, muts);
+		high = muts[mutsfreqs>0.9];
+		highfreqs = sim.mutationFrequencies(NULL, high);
+		if (length(high)>0){
+			for (i in seqAlong(high)){
+				writeFile('muts_'+iter+'.txt', paste(c(high[i].id, high[i].originGeneration, high[i].selectionCoeff, highfreqs[i]), sep=', '), append=T);
+				}
+		}
+
+		sim.simulationFinished();
+}

@@ -1,0 +1,110 @@
+initialize() {
+	defineConstant("generations", 100000);
+	defineConstant('seq_len', 1e5);
+	defineConstant("migration", 0.0001);
+	defineConstant('mean_gbm', 0.001);
+	defineConstant('mean_lbm', 0.001);
+
+	/*
+	//commented out: input parameters
+	defineConstant("mutation_rate", 0);
+	defineConstant('iter', 0);
+	defineConstant('recomb', 1e-6);
+	defineConstant('fraction_gbm', 0.0);
+	defineConstant('fraction_lbm', 1.0);
+	*/
+	
+	//mutation rate defined for all n_loci sites, add neutral section after last mutation site 
+	initializeMutationRate(mutation_rate);
+	initializeRecombinationRate(recomb);
+
+	// m1 mutation: divergently selected
+	initializeMutationType("m1", 0.5, "e", mean_lbm);
+	//make sure slim includes fixed mutations to calculate fitness
+	m1.convertToSubstitution = T;
+	//multiple mutations on one locus, stack effect sizes s, only remember last l
+	m1.mutationStackPolicy = "l";
+	
+	//m2 mutation under global selection
+	initializeMutationType("m2", 0.5, "e", mean_gbm);
+	m2.convertToSubstitution = T;
+	//multiple mutations on one locus, stack effect sizes s, only remember last l
+	m2.mutationStackPolicy = "l";
+
+	//m3 neutral mutation
+	initializeMutationType("m3", 0.5, "f", 0.0);
+	m3.mutationStackPolicy = "l";
+
+	// g1 genomic element type: both 
+	total = fraction_lbm + fraction_gbm;
+	fraction_neutr = 3.0 - total;
+	initializeGenomicElementType("g1", c(m1, m2, m3), c(fraction_lbm, fraction_gbm, fraction_neutr));
+	for (element in seqLen(asInteger(seq_len)))
+		initializeGenomicElement(g1, element, element);
+
+	initializeTreeSeq(simplificationRatio=INF);
+
+	//set working directory
+	setwd(""+folder);
+		
+}
+
+1 {
+	
+	//size in each deme 10000
+	sim.addSubpop("p1", 10000);
+	sim.addSubpop("p2", 10000);
+	p1.setMigrationRates(p2, migration);
+	p2.setMigrationRates(p1, migration);
+
+	gens = seq(250,generations+1, by=500);
+	for (gen in gens){
+		sim.registerEarlyEvent(NULL, s1.source, gen, gen);
+		}
+	sim.deregisterScriptBlock(s1);		
+}	
+
+s1 1 early() {
+	//determine divergence on each locus
+	
+	//calculate reproductive isolation, relative fitness of migrants
+	migrants1 = p1.individuals.migrant;
+	migrants2 = p2.individuals.migrant;
+	
+	//determine fitness of all individuals
+	fitness_home1 = mean(p1.cachedFitness(p1.individuals[!migrants1].index));
+	
+	if (length(p1.individuals[migrants1])>0){
+		fitness_away1 = mean(p1.cachedFitness(p1.individuals[migrants1].index));
+		ratio1 = fitness_away1/fitness_home1*100;}
+	
+	else {
+		ratio1 = 'NaN';
+		}
+
+	fitness_home2 = mean(p2.cachedFitness(p2.individuals[!migrants2].index));
+	
+	if (length(p2.individuals[migrants2])>0){
+		fitness_away2 = mean(p2.cachedFitness(p2.individuals[migrants2].index));
+		ratio2 = fitness_away2/fitness_home2*100;}
+	
+	else {
+		ratio2 = 'NaN';
+		}
+	
+	//global values
+	writeFile("DB_glob"+iter+".txt", paste(c(sim.generation, ratio1, ratio2), sep=", "), append=T);
+	}
+
+
+fitness(m1, p2){ return (1/relFitness);}
+
+1: late(){
+	
+	if (sim.generation%500==0) sim.treeSeqSimplify();
+}
+
+100001 late() {
+	sim.treeSeqOutput('treeseq'+iter+'.trees');
+	sim.simulationFinished();
+	}
