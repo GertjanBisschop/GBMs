@@ -1,11 +1,11 @@
-<h1> GBMs <h1>
+# GBMs 
 
 This repository contains the SLiM scripts for Bisschop et al. (2020).
 
 - trait-based model
 - sweep-based model
 
-<h1> How to run the script <h1>
+# How to run the script
 
 Example
 
